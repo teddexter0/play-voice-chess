@@ -80,7 +80,7 @@ export default function Home() {
   }, []);
 
   // Parse voice commands to chess notation
-  const parseVoiceMove = (command: string): string | null => {
+  const parseVoiceMove = useCallback((command: string): string | null => {
     const cleanCommand = command.toLowerCase().trim();
     
     // Handle castling
@@ -118,7 +118,7 @@ export default function Home() {
     }
     
     return null;
-  };
+  }, []);
 
   // Make move function
   const makeMove = useCallback((moveString: string) => {
@@ -169,57 +169,69 @@ export default function Home() {
 
     setIsListening(true);
     setError('');
+    recognitionRef.current.onerror = () => {
+  setIsListening(false);
+};
+recognitionRef.current.onend = () => {
+  setIsListening(false);
+};
+
     recognitionRef.current.onresult = (event: SpeechRecognitionEvent) => {
-      const spokenWords = event.results[event.resultIndex][0].transcript;
-      setTranscript(spokenWords);
+  const spokenWords = event.results[event.resultIndex][0].transcript;
+  setTranscript(spokenWords);
 
-      const moveString = parseVoiceMove(spokenWords);
-      if (!moveString) {
-        setError('Could not understand move. Please try again.');
-        speak('Could not understand move. Please try again.');
-        return;
+  const moveString = parseVoiceMove(spokenWords);
+  if (!moveString) {
+    setError('Could not understand move. Please try again.');
+    speak('Could not understand move. Please try again.');
+    recognitionRef.current?.stop();           // ✅ STOP here
+    setIsListening(false);                    // ✅ and stop flag
+    return;
+  }
+
+  try {
+    const newGame = new Chess(fen);
+    const move = newGame.move(moveString);
+
+    if (move) {
+      setGame(newGame);
+      setFen(newGame.fen());
+      setMoveHistory(prev => [...prev, move.san]);
+      setCurrentTurn(newGame.turn() === 'w' ? 'white' : 'black');
+      setLastMove(move.san);
+      setError('');
+      speak(`${move.san}`);
+
+      if (newGame.isCheckmate()) {
+        setGameStatus('checkmate');
+        speak(`Checkmate! ${currentTurn === 'white' ? 'Black' : 'White'} wins!`);
+      } else if (newGame.isCheck()) {
+        setGameStatus('check');
+        speak('Check!');
+      } else if (newGame.isStalemate()) {
+        setGameStatus('stalemate');
+        speak('Stalemate! The game is a draw.');
+      } else if (newGame.isDraw()) {
+        setGameStatus('draw');
+        speak('The game is a draw.');
+      } else {
+        setGameStatus('playing');
       }
+    } else {
+      setError('Invalid move. Please try again.');
+      speak('Invalid move. Please try again.');
+    }
+  } catch {
+    setError('Invalid move format. Please try again.');
+    speak('Invalid move. Please try again.');
+  }
 
-      try {
-        const newGame = new Chess(fen);
-        const move = newGame.move(moveString);
+  recognitionRef.current?.stop();         // ✅ STOP AFTER everything
+  setIsListening(false);                  // ✅ Update flag
+};
 
-        if (move) {
-          setGame(newGame);
-          setFen(newGame.fen());
-          setMoveHistory(prev => [...prev, move.san]);
-          setCurrentTurn(newGame.turn() === 'w' ? 'white' : 'black');
-          setLastMove(move.san);
-          setError('');
-
-          // Announce the move
-          speak(`${move.san}`);
-
-          // Check game status
-          if (newGame.isCheckmate()) {
-            setGameStatus('checkmate');
-            speak(`Checkmate! ${currentTurn} wins!`);
-          } else if (newGame.isCheck()) {
-            setGameStatus('check');
-            speak('Check!');
-          } else if (newGame.isStalemate()) {
-            setGameStatus('stalemate');
-            speak('Stalemate! The game is a draw.');
-          } else if (newGame.isDraw()) {
-            setGameStatus('draw');
-            speak('The game is a draw.');
-          } else {
-            setGameStatus('playing');
-          }
-        } else {
-          setError('Invalid move. Please try again.');
-          speak('Invalid move. Please try again.');
-        }
-      } catch {
-        setError('Invalid move format. Please try again.');
-        speak('Invalid move. Please try again.');
-      }
-    };
+// ✅ Only start listening here
+recognitionRef.current.start();
   }, [fen, currentTurn, speak]);
 
   // Handle piece drop for touch/mouse interaction (using your original API)
