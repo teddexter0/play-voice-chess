@@ -9,10 +9,10 @@
     "lint": "next lint"
   },
   "dependencies": {
-    "chess.js": "^1.4.0",
+    "chess.js": "^1.0.0-beta.6",
     "next": "15.4.1",
     "react": "19.1.0",
-    "react-chessboard": "^5.2.0",
+    "react-chessboard": "^4.3.0",
     "react-dom": "19.1.0"
   },
   "devDependencies": {
