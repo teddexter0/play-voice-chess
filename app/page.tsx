@@ -77,48 +77,49 @@ export default function Home() {
       utterance.pitch = 1;
       synthRef.current.speak(utterance);
     }
-  }, []);
+  }, []); 
 
-  // Parse voice commands to chess notation
   const parseVoiceMove = useCallback((command: string): string | null => {
-    const cleanCommand = command.toLowerCase().trim();
-    
-    // Handle castling
-    if (cleanCommand.includes('castle king') || cleanCommand.includes('short castle')) {
-      return 'O-O';
-    }
-    if (cleanCommand.includes('castle queen') || cleanCommand.includes('long castle')) {
-      return 'O-O-O';
-    }
-    
-    // Convert spoken notation to algebraic notation
-    const pieceMap: { [key: string]: string } = {
-      'king': 'K',
-      'queen': 'Q',
-      'rook': 'R',
-      'bishop': 'B',
-      'knight': 'N',
-      'pawn': ''
-    };
-    
-    // Handle moves like "pawn to e4", "knight to f3", etc.
-    const movePattern = /(?:(king|queen|rook|bishop|knight|pawn)\s+)?(?:to\s+)?([a-h][1-8])/i;
-    const match = cleanCommand.match(movePattern);
-    
-    if (match) {
-      const piece = match[1] ? pieceMap[match[1]] || '' : '';
-      const square = match[2];
-      return piece + square;
-    }
-    
-    // Direct algebraic notation (e.g., "e4", "Nf3")
-    const directPattern = /^([KQRBN]?[a-h][1-8]|O-O(-O)?)$/i;
-    if (directPattern.test(cleanCommand)) {
-      return cleanCommand;
-    }
-    
-    return null;
-  }, []);
+  const clean = command.toLowerCase().trim();
+
+  // Castling
+  if (clean.includes("castle") || clean.includes("castling")) {
+    if (clean.includes("king") || clean.includes("kingside")) return "O-O";
+    if (clean.includes("queen") || clean.includes("queenside")) return "O-O-O";
+    return "Please specify kingside or queenside castling";
+  }
+
+  const pieceMap: Record<string, string> = {
+    king: "K", queen: "Q", rook: "R",
+    bishop: "B", knight: "N", pawn: "",
+  };
+
+  // Handle captures
+  const capturePattern = /(?:(pawn|knight|bishop|rook|queen|king)?\s*(?:on\s+)?([a-h])\s*(captures|takes)\s*([a-h][1-8]))/;
+  const capMatch = clean.match(capturePattern);
+  if (capMatch) {
+    const piece = pieceMap[capMatch[1] ?? "pawn"];
+    const file = capMatch[2];
+    const target = capMatch[4];
+    return `${piece}${file}x${target}`;
+  }
+
+  // Simple: "bishop to c4", "knight f6"
+  const movePattern = /(?:(king|queen|rook|bishop|knight|pawn)?\s*(?:to)?\s*([a-h][1-8]))/;
+  const match = clean.match(movePattern);
+  if (match) {
+    const piece = pieceMap[match[1] ?? "pawn"];
+    const square = match[2];
+    return piece + square;
+  }
+
+  // Fallback to direct algebraic (like Nf3 or e4)
+  const directPattern = /^([KQRBN]?[a-h][1-8]|[a-h]x[a-h][1-8]|O-O(-O)?)$/i;
+  if (directPattern.test(clean)) return clean;
+
+  return null;
+}, []);
+
 
   // Make move function
   const makeMove = useCallback((moveString: string) => {
@@ -204,7 +205,7 @@ recognitionRef.current.onend = () => {
 
       if (newGame.isCheckmate()) {
         setGameStatus('checkmate');
-        speak(`Checkmate! ${currentTurn === 'white' ? 'Black' : 'White'} wins!`);
+        speak(`Checkmate! ${currentTurn === 'black' ? 'Black' : 'White'} wins!`);
       } else if (newGame.isCheck()) {
         setGameStatus('check');
         speak('Check!');
@@ -310,17 +311,40 @@ recognitionRef.current.start();
   };
 
   // Chessboard options object (matching your original structure)
-  const chessboardOptions = {
-    position: fen,
-    onPieceDrop: onDrop,
-    boardWidth: Math.min(400, typeof window !== 'undefined' ? Math.min(window.innerWidth - 40, window.innerHeight - 200) : 400),
-    customBoardStyle: {
-      borderRadius: '20px',
-      boxShadow: '0 25px 50px -12px rgba(0, 0, 0, 0.7), 0 0 0 1px rgba(16, 185, 129, 0.2)',
-    },
-    customDarkSquareStyle: { backgroundColor: '#769656' },
-    customLightSquareStyle: { backgroundColor: '#eeeed2' },
-  };
+const chessboardOptions = {
+  position: fen,
+  onPieceDrop: onDrop,
+  boardWidth: Math.min(
+    400,
+    typeof window !== 'undefined'
+      ? Math.min(window.innerWidth - 40, window.innerHeight - 200)
+      : 400
+  ),
+  customBoardStyle: {
+    borderRadius: '20px',
+    boxShadow: '0 25px 50px -12px rgba(0, 0, 0, 0.7), 0 0 0 1px rgba(16, 185, 129, 0.2)',
+  },
+  customDarkSquareStyle: { backgroundColor: '#769656' },
+  customLightSquareStyle: { backgroundColor: '#eeeed2' },
+
+  customDragPieceElement: (
+    piece: string,
+    square: string,
+    pieceRef: React.RefObject<HTMLImageElement>
+  ) => {
+    if (!pieceRef.current) return null;
+
+    const img = document.createElement('img');
+    img.src = pieceRef.current.src;
+    img.style.width = '56px';
+    img.style.height = '56px';
+    img.style.objectFit = 'contain';
+    img.style.pointerEvents = 'none';
+
+    return img;
+  },
+};
+
 
   return (
     <div className="min-h-screen bg-gradient-to-br from-emerald-950 via-slate-900 to-teal-950 p-2 sm:p-4 overflow-hidden">
