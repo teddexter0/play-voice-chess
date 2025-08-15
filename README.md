@@ -47,8 +47,8 @@
 
 ```bash
 # Clone the repository
-git clone https://github.com/yourusername/voice-chess-pro.git
-cd voice-chess-pro
+git clone https://github.com/teddexter0/play-voice-chess
+cd play-voice-chess
 
 # Install dependencies
 npm install
