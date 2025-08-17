@@ -11,6 +11,16 @@
 
 </div>
 
+## Images
+
+### Screenshots
+
+<div align="center">
+
+<img src="./assets/screenshot.png" alt="Screenshot 1" width="200" /> 
+
+</div>
+
 ## ✨ Features
 
 ### 🎙️ **Revolutionary Voice Control**
