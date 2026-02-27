@@ -1,7 +1,7 @@
 'use client';
 
 import { useState, useEffect, useRef, useCallback } from "react";
-import { Chess } from "chess.js";
+import { Chess, Square } from "chess.js";
 import { Chessboard } from "react-chessboard";
 
 // Voice recognition interface
@@ -145,49 +145,6 @@ export default function Home() {
 }, []);
 
 
-  // Make move function
-  const makeMove = useCallback((moveString: string) => {
-    try {
-      const newGame = new Chess(fen);
-      const move = newGame.move(moveString);
-      
-      if (move) {
-        setGame(newGame);
-        setFen(newGame.fen());
-        setMoveHistory(prev => [...prev, move.san]);
-        setCurrentTurn(newGame.turn() === 'w' ? 'white' : 'black');
-        setLastMove(move.san);
-        setError('');
-        
-        // Announce the move
-        speak(`${move.san}`);
-        
-        // Check game status
-        if (newGame.isCheckmate()) {
-          setGameStatus('checkmate');
-          speak(`Checkmate! ${currentTurn} wins!`);
-        } else if (newGame.isCheck()) {
-          setGameStatus('check');
-          speak('Check!');
-        } else if (newGame.isStalemate()) {
-          setGameStatus('stalemate');
-          speak('Stalemate! The game is a draw.');
-        } else if (newGame.isDraw()) {
-          setGameStatus('draw');
-          speak('The game is a draw.');
-        } else {
-          setGameStatus('playing');
-        }
-      } else {
-        setError('Invalid move. Please try again.');
-        speak('Invalid move. Please try again.');
-      }
-    } catch {
-      setError('Invalid move format. Please try again.');
-      speak('Invalid move. Please try again.');
-    }
-  }, [fen, currentTurn, speak, parseVoiceMove]);
-
   // Handle voice recognition
   const startListening = useCallback(() => {
     if (!recognitionRef.current) return;
@@ -228,7 +185,7 @@ export default function Home() {
     // Support "e2e4" from-to format returned by parseVoiceMove for two-square speech
     const isFromTo = /^[a-h][1-8][a-h][1-8]$/.test(moveString);
     const move = isFromTo
-      ? newGame.move({ from: moveString.slice(0, 2) as any, to: moveString.slice(2, 4) as any, promotion: 'q' })
+      ? newGame.move({ from: moveString.slice(0, 2) as Square, to: moveString.slice(2, 4) as Square, promotion: 'q' })
       : newGame.move(moveString);
 
     if (move) {
@@ -270,7 +227,7 @@ export default function Home() {
 
 // ✅ Only start listening here
 recognitionRef.current.start();
-  }, [fen, currentTurn, speak]);
+  }, [fen, currentTurn, speak, parseVoiceMove]);
 
   // Handle piece drop for touch/mouse interaction (using your original API)
   function onDrop(sourceSquare: string, targetSquare: string) {
@@ -316,9 +273,9 @@ recognitionRef.current.start();
 
   // Highlight valid moves for the selected square
   function showValidMoves(square: string, currentGame: Chess) {
-    const moves = currentGame.moves({ square: square as any, verbose: true });
+    const moves = currentGame.moves({ square: square as Square, verbose: true });
     const highlights: Record<string, object> = {};
-    (moves as any[]).forEach(move => {
+    moves.forEach(move => {
       const hasPiece = currentGame.get(move.to);
       highlights[move.to] = {
         background: hasPiece
@@ -327,7 +284,7 @@ recognitionRef.current.start();
         borderRadius: '50%',
       };
     });
-    if ((moves as any[]).length > 0) {
+    if (moves.length > 0) {
       highlights[square] = { background: 'rgba(255,215,0,0.4)' };
     }
     setOptionSquares(highlights);
@@ -342,7 +299,7 @@ recognitionRef.current.start();
 
     if (selectedSquare) {
       // Attempt move
-      const move = currentGame.move({ from: selectedSquare, to: square, promotion: 'q' });
+      const move = currentGame.move({ from: selectedSquare as Square, to: square as Square, promotion: 'q' });
 
       if (move) {
         setGame(currentGame);
@@ -373,7 +330,7 @@ recognitionRef.current.start();
       }
 
       // Not a valid move — re-select if clicking another friendly piece
-      const clicked = currentGame.get(square as any);
+      const clicked = currentGame.get(square as Square);
       if (clicked && clicked.color === playerColor) {
         setSelectedSquare(square);
         showValidMoves(square, currentGame);
@@ -387,7 +344,7 @@ recognitionRef.current.start();
     }
 
     // Nothing selected yet — select if friendly piece
-    const piece = currentGame.get(square as any);
+    const piece = currentGame.get(square as Square);
     if (piece && piece.color === playerColor) {
       setSelectedSquare(square);
       showValidMoves(square, currentGame);
