@@ -51,6 +51,8 @@ export default function Home() {
   const [selectedSquare, setSelectedSquare] = useState<string | null>(null);
   const [optionSquares, setOptionSquares] = useState<Record<string, object>>({});
 
+  const [boardWidth, setBoardWidth] = useState(400);
+  const boardContainerRef = useRef<HTMLDivElement>(null);
   const recognitionRef = useRef<SpeechRecognition | null>(null);
   const synthRef = useRef<SpeechSynthesis | null>(null);
 
@@ -68,6 +70,17 @@ export default function Home() {
         synthRef.current = window.speechSynthesis;
       }
     }
+  }, []);
+
+  // Reactive board width — tracks the actual container size so drag coords are correct
+  useEffect(() => {
+    const el = boardContainerRef.current;
+    if (!el) return;
+    const ro = new ResizeObserver(([entry]) => {
+      setBoardWidth(Math.floor(entry.contentRect.width));
+    });
+    ro.observe(el);
+    return () => ro.disconnect();
   }, []);
 
   // Speech synthesis function
@@ -88,7 +101,8 @@ export default function Home() {
   const clean = command.toLowerCase().trim()
     .replace(/\btoo\b/g, 'to')
     .replace(/\btwo\b/g, 'to')
-    .replace(/\baitch\b/g, 'h');
+    .replace(/\baitch\b/g, 'h')
+    .replace(/\bnight\b/g, 'knight');
 
   // Castling
   if (clean.includes("castle") || clean.includes("castling")) {
@@ -391,12 +405,7 @@ recognitionRef.current.start();
 const chessboardOptions = {
   position: fen,
   onPieceDrop: onDrop,
-  boardWidth: Math.min(
-    400,
-    typeof window !== 'undefined'
-      ? Math.min(window.innerWidth - 40, window.innerHeight - 200)
-      : 400
-  ),
+  boardWidth,
   customBoardStyle: {
     borderRadius: '20px',
     boxShadow: '0 25px 50px -12px rgba(0, 0, 0, 0.7), 0 0 0 1px rgba(16, 185, 129, 0.2)',
@@ -432,7 +441,7 @@ const chessboardOptions = {
           {/* Chess Board */}
           <div className="lg:col-span-3 order-1">
             <div className="board-container bg-gradient-to-br from-slate-800/80 to-slate-900/80 backdrop-blur-xl rounded-3xl p-3 sm:p-6 shadow-2xl border border-emerald-500/20 hover:border-emerald-400/30 transition-all duration-500 animate-fade-in">
-              <div className="flex justify-center items-center">
+              <div ref={boardContainerRef} className="flex justify-center items-center">
                 <div className="chess-board-wrapper relative">
                   <Chessboard {...chessboardOptions} />
                   {/* Subtle glow effect around board */}
