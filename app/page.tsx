@@ -1,7 +1,7 @@
 'use client';
 
 import { useState, useEffect, useRef, useCallback } from "react";
-import { Chess } from "chess.js";
+import { Chess, Square } from "chess.js";
 import { Chessboard } from "react-chessboard";
 
 // Voice recognition interface
@@ -48,7 +48,9 @@ export default function Home() {
   const [lastMove, setLastMove] = useState<string>('');
   const [error, setError] = useState<string>('');
   const [isVoiceSupported, setIsVoiceSupported] = useState(false);
-  
+  const [selectedSquare, setSelectedSquare] = useState<string | null>(null);
+  const [optionSquares, setOptionSquares] = useState<Record<string, object>>({});
+
   const recognitionRef = useRef<SpeechRecognition | null>(null);
   const synthRef = useRef<SpeechSynthesis | null>(null);
 
@@ -80,89 +82,68 @@ export default function Home() {
   }, []); 
 
   const parseVoiceMove = useCallback((command: string): string | null => {
-  const clean = command.toLowerCase().trim();
+  if (!command || !command.trim()) return null;
+
+  // Normalize – fix common speech-to-text substitutions
+  const clean = command.toLowerCase().trim()
+    .replace(/\btoo\b/g, 'to')
+    .replace(/\btwo\b/g, 'to')
+    .replace(/\baitch\b/g, 'h');
 
   // Castling
   if (clean.includes("castle") || clean.includes("castling")) {
-    if (clean.includes("king") || clean.includes("kingside")) return "O-O";
-    if (clean.includes("queen") || clean.includes("queenside")) return "O-O-O";
-    return "Please specify kingside or queenside castling";
+    if (clean.includes("king") || clean.includes("kingside") || clean.includes("short")) return "O-O";
+    if (clean.includes("queen") || clean.includes("queenside") || clean.includes("long")) return "O-O-O";
+    return null; // side unspecified – treat as unrecognised
   }
+
+  // O-O / 0-0 spoken as text
+  const stripped = clean.replace(/\s/g, '');
+  if (/^(o-?o-?o|0-?0-?0)$/i.test(stripped)) return "O-O-O";
+  if (/^(o-?o|0-?0)$/i.test(stripped)) return "O-O";
 
   const pieceMap: Record<string, string> = {
     king: "K", queen: "Q", rook: "R",
     bishop: "B", knight: "N", pawn: "",
   };
 
-  // Handle captures
-  const capturePattern = /(?:(pawn|knight|bishop|rook|queen|king)?\s*(?:on\s+)?([a-h])\s*(captures|takes)\s*([a-h][1-8]))/;
+  // Captures: "bishop on f3 captures g4", "rook f3 takes g4", "pawn captures e5", "d4 takes e5"
+  const capturePattern = /(pawn|knight|bishop|rook|queen|king)?\s*(?:on\s+)?([a-h][1-8]?)\s*(?:captures?|takes?)\s*([a-h][1-8])/;
   const capMatch = clean.match(capturePattern);
   if (capMatch) {
-    const piece = pieceMap[capMatch[1] ?? "pawn"];
-    const file = capMatch[2];
-    const target = capMatch[4];
-    return `${piece}${file}x${target}`;
+    const piece = capMatch[1] ? pieceMap[capMatch[1]] : "";
+    const source = capMatch[2]; // file only or full square – both valid in SAN
+    const target = capMatch[3];
+    return `${piece}${source}x${target}`;
   }
 
-  // Simple: "bishop to c4", "knight f6"
-  const movePattern = /(?:(king|queen|rook|bishop|knight|pawn)?\s*(?:to)?\s*([a-h][1-8]))/;
+  // Two-square format: "e2 to e4" or "e2 e4" → internal "e2e4" (handled as {from,to} later)
+  const twoSqPattern = /\b([a-h][1-8])\s+(?:to\s+)?([a-h][1-8])\b/;
+  const twoMatch = clean.match(twoSqPattern);
+  if (twoMatch && twoMatch[1] !== twoMatch[2]) {
+    return twoMatch[1] + twoMatch[2]; // e.g. "e2e4"
+  }
+
+  // Standard: "bishop to c4", "knight f6", "pawn e4", "king to g1"
+  const movePattern = /(king|queen|rook|bishop|knight|pawn)?\s*(?:to\s+)?([a-h][1-8])/;
   const match = clean.match(movePattern);
-  if (match) {
-    const piece = pieceMap[match[1] ?? "pawn"];
-    const square = match[2];
-    return piece + square;
+  if (match && match[2]) {
+    const piece = match[1] ? pieceMap[match[1]] : "";
+    return piece + match[2];
   }
 
-  // Fallback to direct algebraic (like Nf3 or e4)
-  const directPattern = /^([KQRBN]?[a-h][1-8]|[a-h]x[a-h][1-8]|O-O(-O)?)$/i;
-  if (directPattern.test(clean)) return clean;
+  // Direct algebraic: "e4", "Nf3", "Bb5" etc.
+  if (/^([KQRBN]?[a-h][1-8][+#]?|[KQRBN]?[a-h]x[a-h][1-8][+#]?|[a-h]x[a-h][1-8][+#]?|O-O-O|O-O)$/i.test(stripped)) {
+    return stripped.replace(/[+#]/g, '');
+  }
+
+  // Last resort: single square mentioned → treat as pawn move
+  const anySquare = clean.match(/\b([a-h][1-8])\b/g);
+  if (anySquare && anySquare.length === 1) return anySquare[0];
 
   return null;
 }, []);
 
-
-  // Make move function
-  const makeMove = useCallback((moveString: string) => {
-    try {
-      const newGame = new Chess(fen);
-      const move = newGame.move(moveString);
-      
-      if (move) {
-        setGame(newGame);
-        setFen(newGame.fen());
-        setMoveHistory(prev => [...prev, move.san]);
-        setCurrentTurn(newGame.turn() === 'w' ? 'white' : 'black');
-        setLastMove(move.san);
-        setError('');
-        
-        // Announce the move
-        speak(`${move.san}`);
-        
-        // Check game status
-        if (newGame.isCheckmate()) {
-          setGameStatus('checkmate');
-          speak(`Checkmate! ${currentTurn} wins!`);
-        } else if (newGame.isCheck()) {
-          setGameStatus('check');
-          speak('Check!');
-        } else if (newGame.isStalemate()) {
-          setGameStatus('stalemate');
-          speak('Stalemate! The game is a draw.');
-        } else if (newGame.isDraw()) {
-          setGameStatus('draw');
-          speak('The game is a draw.');
-        } else {
-          setGameStatus('playing');
-        }
-      } else {
-        setError('Invalid move. Please try again.');
-        speak('Invalid move. Please try again.');
-      }
-    } catch {
-      setError('Invalid move format. Please try again.');
-      speak('Invalid move. Please try again.');
-    }
-  }, [fen, currentTurn, speak, parseVoiceMove]);
 
   // Handle voice recognition
   const startListening = useCallback(() => {
@@ -170,12 +151,21 @@ export default function Home() {
 
     setIsListening(true);
     setError('');
-    recognitionRef.current.onerror = () => {
-  setIsListening(false);
-};
-recognitionRef.current.onend = () => {
-  setIsListening(false);
-};
+    recognitionRef.current.onerror = (event: SpeechRecognitionErrorEvent) => {
+      setIsListening(false);
+      if (event.error === 'no-speech') {
+        setError('No speech detected. Please try again.');
+      } else if (event.error === 'not-allowed') {
+        setError('Microphone access denied. Please allow microphone in browser settings.');
+      } else if (event.error === 'network') {
+        setError('Network error. Please check your connection.');
+      } else {
+        setError('Voice recognition error. Please try again.');
+      }
+    };
+    recognitionRef.current.onend = () => {
+      setIsListening(false);
+    };
 
     recognitionRef.current.onresult = (event: SpeechRecognitionEvent) => {
   const spokenWords = event.results[event.resultIndex][0].transcript;
@@ -192,7 +182,11 @@ recognitionRef.current.onend = () => {
 
   try {
     const newGame = new Chess(fen);
-    const move = newGame.move(moveString);
+    // Support "e2e4" from-to format returned by parseVoiceMove for two-square speech
+    const isFromTo = /^[a-h][1-8][a-h][1-8]$/.test(moveString);
+    const move = isFromTo
+      ? newGame.move({ from: moveString.slice(0, 2) as Square, to: moveString.slice(2, 4) as Square, promotion: 'q' })
+      : newGame.move(moveString);
 
     if (move) {
       setGame(newGame);
@@ -205,7 +199,7 @@ recognitionRef.current.onend = () => {
 
       if (newGame.isCheckmate()) {
         setGameStatus('checkmate');
-        speak(`Checkmate! ${currentTurn === 'black' ? 'Black' : 'White'} wins!`);
+        speak(`Checkmate! ${currentTurn} wins!`);
       } else if (newGame.isCheck()) {
         setGameStatus('check');
         speak('Check!');
@@ -227,13 +221,13 @@ recognitionRef.current.onend = () => {
     speak('Invalid move. Please try again.');
   }
 
-  recognitionRef.current?.stop();         // ✅ STOP AFTER everything
-  setIsListening(false);                  // ✅ Update flag
+  recognitionRef.current?.stop();
+  setIsListening(false);
 };
 
 // ✅ Only start listening here
 recognitionRef.current.start();
-  }, [fen, currentTurn, speak]);
+  }, [fen, currentTurn, speak, parseVoiceMove]);
 
   // Handle piece drop for touch/mouse interaction (using your original API)
   function onDrop(sourceSquare: string, targetSquare: string) {
@@ -251,11 +245,12 @@ recognitionRef.current.start();
       setCurrentTurn(newGame.turn() === 'w' ? 'white' : 'black');
       setLastMove(move.san);
       setError('');
-      
-      // Check game status
+      setSelectedSquare(null);
+      setOptionSquares({});
+
       if (newGame.isCheckmate()) {
         setGameStatus('checkmate');
-        speak(`Checkmate! ${currentTurn === 'white' ? 'Black' : 'White'} wins!`);
+        speak(`Checkmate! ${currentTurn} wins!`);
       } else if (newGame.isCheck()) {
         setGameStatus('check');
         speak('Check!');
@@ -268,11 +263,91 @@ recognitionRef.current.start();
       } else {
         setGameStatus('playing');
       }
-      
+
       return true;
     } else {
       setError("Invalid move! It's not your turn or that move is illegal.");
       return false;
+    }
+  }
+
+  // Highlight valid moves for the selected square
+  function showValidMoves(square: string, currentGame: Chess) {
+    const moves = currentGame.moves({ square: square as Square, verbose: true });
+    const highlights: Record<string, object> = {};
+    moves.forEach(move => {
+      const hasPiece = currentGame.get(move.to);
+      highlights[move.to] = {
+        background: hasPiece
+          ? 'radial-gradient(circle, rgba(220,53,69,0.45) 60%, transparent 60%)'
+          : 'radial-gradient(circle, rgba(52,211,153,0.45) 30%, transparent 30%)',
+        borderRadius: '50%',
+      };
+    });
+    if (moves.length > 0) {
+      highlights[square] = { background: 'rgba(255,215,0,0.4)' };
+    }
+    setOptionSquares(highlights);
+  }
+
+  // Click-to-move handler
+  function onSquareClick(square: string) {
+    if (gameStatus === 'checkmate' || gameStatus === 'stalemate' || gameStatus === 'draw') return;
+
+    const currentGame = new Chess(fen);
+    const playerColor = currentTurn === 'white' ? 'w' : 'b';
+
+    if (selectedSquare) {
+      // Attempt move
+      const move = currentGame.move({ from: selectedSquare as Square, to: square as Square, promotion: 'q' });
+
+      if (move) {
+        setGame(currentGame);
+        setFen(currentGame.fen());
+        setMoveHistory(prev => [...prev, move.san]);
+        setCurrentTurn(currentGame.turn() === 'w' ? 'white' : 'black');
+        setLastMove(move.san);
+        setError('');
+        setSelectedSquare(null);
+        setOptionSquares({});
+
+        if (currentGame.isCheckmate()) {
+          setGameStatus('checkmate');
+          speak(`Checkmate! ${currentTurn} wins!`);
+        } else if (currentGame.isCheck()) {
+          setGameStatus('check');
+          speak('Check!');
+        } else if (currentGame.isStalemate()) {
+          setGameStatus('stalemate');
+          speak('Stalemate!');
+        } else if (currentGame.isDraw()) {
+          setGameStatus('draw');
+          speak('Draw!');
+        } else {
+          setGameStatus('playing');
+        }
+        return;
+      }
+
+      // Not a valid move — re-select if clicking another friendly piece
+      const clicked = currentGame.get(square as Square);
+      if (clicked && clicked.color === playerColor) {
+        setSelectedSquare(square);
+        showValidMoves(square, currentGame);
+        return;
+      }
+
+      // Deselect
+      setSelectedSquare(null);
+      setOptionSquares({});
+      return;
+    }
+
+    // Nothing selected yet — select if friendly piece
+    const piece = currentGame.get(square as Square);
+    if (piece && piece.color === playerColor) {
+      setSelectedSquare(square);
+      showValidMoves(square, currentGame);
     }
   }
 
@@ -287,6 +362,8 @@ recognitionRef.current.start();
     setLastMove('');
     setError('');
     setTranscript('');
+    setSelectedSquare(null);
+    setOptionSquares({});
     speak('New game started. White to move.');
   };
 
@@ -326,23 +403,8 @@ const chessboardOptions = {
   },
   customDarkSquareStyle: { backgroundColor: '#769656' },
   customLightSquareStyle: { backgroundColor: '#eeeed2' },
-
-  customDragPieceElement: (
-    piece: string,
-    square: string,
-    pieceRef: React.RefObject<HTMLImageElement>
-  ) => {
-    if (!pieceRef.current) return null;
-
-    const img = document.createElement('img');
-    img.src = pieceRef.current.src;
-    img.style.width = '56px';
-    img.style.height = '56px';
-    img.style.objectFit = 'contain';
-    img.style.pointerEvents = 'none';
-
-    return img;
-  },
+  onSquareClick: onSquareClick,
+  customSquareStyles: optionSquares,
 };
 
 
