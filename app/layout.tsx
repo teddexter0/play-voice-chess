@@ -16,7 +16,11 @@ export const metadata: Metadata = {
   title: "Voice Chess Pro - Play Chess with Your Voice",
   description: "Revolutionary voice-controlled chess game. Speak your moves and play chess hands-free with advanced voice recognition technology.",
   keywords: "voice chess, speech recognition, chess game, voice controlled chess, online chess",
-  authors: [{ name: "Voice Chess Pro Team" }]
+  authors: [{ name: "Voice Chess Pro Team" }],
+  icons: {
+    icon: [{ url: '/icon.svg', type: 'image/svg+xml' }],
+    apple: '/icon.svg',
+  },
 };
 
 // Next.js 13+ requires viewport and themeColor to be exported separately
@@ -34,7 +38,6 @@ export default function RootLayout({
   return (
     <html lang="en">
       <head>
-        <link rel="icon" type="image/svg+xml" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'%3E%3Ctext y='.9em' font-size='90'%3E♟%3C/text%3E%3C/svg%3E" />
         <meta name="apple-mobile-web-app-capable" content="yes" />
         <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
       </head>

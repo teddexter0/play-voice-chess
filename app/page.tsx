@@ -44,6 +44,7 @@ export default function Home() {
   const [transcript, setTranscript] = useState('');
   const [gameStatus, setGameStatus] = useState<GameStatus>('playing');
   const [moveHistory, setMoveHistory] = useState<string[]>([]);
+  const [fenHistory, setFenHistory] = useState<string[]>([]);
   const [currentTurn, setCurrentTurn] = useState<'white' | 'black'>('white');
   const [lastMove, setLastMove] = useState<string>('');
   const [error, setError] = useState<string>('');
@@ -66,7 +67,7 @@ export default function Home() {
         recognitionRef.current.continuous = false;
         recognitionRef.current.interimResults = false;
         recognitionRef.current.language = 'en-US';
-        
+
         synthRef.current = window.speechSynthesis;
       }
     }
@@ -83,81 +84,151 @@ export default function Home() {
     return () => ro.disconnect();
   }, []);
 
+  // Auto-dismiss errors after 4 seconds
+  useEffect(() => {
+    if (!error) return;
+    const t = setTimeout(() => setError(''), 4000);
+    return () => clearTimeout(t);
+  }, [error]);
+
   // Speech synthesis function
   const speak = useCallback((text: string) => {
     if (synthRef.current) {
-      synthRef.current.cancel(); // Cancel any ongoing speech
+      synthRef.current.cancel();
       const utterance = new SpeechSynthesisUtterance(text);
       utterance.rate = 0.9;
       utterance.pitch = 1;
       synthRef.current.speak(utterance);
     }
-  }, []); 
+  }, []);
 
   const parseVoiceMove = useCallback((command: string): string | null => {
-  if (!command || !command.trim()) return null;
+    if (!command || !command.trim()) return null;
 
-  // Normalize – fix common speech-to-text substitutions
-  const clean = command.toLowerCase().trim()
-    .replace(/\btoo\b/g, 'to')
-    .replace(/\btwo\b/g, 'to')
-    .replace(/\baitch\b/g, 'h')
-    .replace(/\bnight\b/g, 'knight');
+    // Normalize – fix common speech-to-text substitutions, spoken letters, spoken numbers
+    const clean = command.toLowerCase().trim()
+      // Alternate piece names
+      .replace(/\bhorse\b/g, 'knight')
+      .replace(/\btower\b/g, 'rook')
+      // Common STT word substitutions
+      .replace(/\btoo\b/g, 'to')
+      .replace(/\bnight\b/g, 'knight')
+      // Spoken file letters (individual letters people say out loud)
+      .replace(/\beh\b/g, 'a')
+      .replace(/\bbee\b/g, 'b')
+      .replace(/\bsee\b/g, 'c')
+      .replace(/\bsea\b/g, 'c')
+      .replace(/\bdee\b/g, 'd')
+      .replace(/\beff\b/g, 'f')
+      .replace(/\bgee\b/g, 'g')
+      .replace(/\baitch\b/g, 'h')
+      // NATO phonetic alphabet
+      .replace(/\balpha\b/g, 'a')
+      .replace(/\bbravo\b/g, 'b')
+      .replace(/\bcharlie\b/g, 'c')
+      .replace(/\bdelta\b/g, 'd')
+      .replace(/\becho\b/g, 'e')
+      .replace(/\bfoxtrot\b/g, 'f')
+      .replace(/\bgolf\b/g, 'g')
+      .replace(/\bhotel\b/g, 'h')
+      // Spoken rank numbers — "two" → "2" so "e two" → "e2" (not "to")
+      .replace(/\bone\b/g, '1')
+      .replace(/\bwon\b/g, '1')
+      .replace(/\btwo\b/g, '2')
+      .replace(/\bthree\b/g, '3')
+      .replace(/\bfour\b/g, '4')
+      .replace(/\bfore\b/g, '4')
+      .replace(/\bfive\b/g, '5')
+      .replace(/\bsix\b/g, '6')
+      .replace(/\bseven\b/g, '7')
+      .replace(/\beight\b/g, '8')
+      .replace(/\bate\b/g, '8')
+      // Compress "file space rank" → "file+rank": "f 4" → "f4", "e 2" → "e2"
+      .replace(/\b([a-h])\s+([1-8])\b/g, '$1$2');
 
-  // Castling
-  if (clean.includes("castle") || clean.includes("castling")) {
-    if (clean.includes("king") || clean.includes("kingside") || clean.includes("short")) return "O-O";
-    if (clean.includes("queen") || clean.includes("queenside") || clean.includes("long")) return "O-O-O";
-    return null; // side unspecified – treat as unrecognised
-  }
+    // Castling
+    if (clean.includes("castle") || clean.includes("castling")) {
+      if (clean.includes("king") || clean.includes("kingside") || clean.includes("short")) return "O-O";
+      if (clean.includes("queen") || clean.includes("queenside") || clean.includes("long")) return "O-O-O";
+      return null; // side unspecified
+    }
 
-  // O-O / 0-0 spoken as text
-  const stripped = clean.replace(/\s/g, '');
-  if (/^(o-?o-?o|0-?0-?0)$/i.test(stripped)) return "O-O-O";
-  if (/^(o-?o|0-?0)$/i.test(stripped)) return "O-O";
+    // O-O / 0-0 spoken as text
+    const stripped = clean.replace(/\s/g, '');
+    if (/^(o-?o-?o|0-?0-?0)$/i.test(stripped)) return "O-O-O";
+    if (/^(o-?o|0-?0)$/i.test(stripped)) return "O-O";
 
-  const pieceMap: Record<string, string> = {
-    king: "K", queen: "Q", rook: "R",
-    bishop: "B", knight: "N", pawn: "",
-  };
+    const pieceMap: Record<string, string> = {
+      king: "K", queen: "Q", rook: "R",
+      bishop: "B", knight: "N", pawn: "",
+    };
 
-  // Captures: "bishop on f3 captures g4", "rook f3 takes g4", "pawn captures e5", "d4 takes e5"
-  const capturePattern = /(pawn|knight|bishop|rook|queen|king)?\s*(?:on\s+)?([a-h][1-8]?)\s*(?:captures?|takes?)\s*([a-h][1-8])/;
-  const capMatch = clean.match(capturePattern);
-  if (capMatch) {
-    const piece = capMatch[1] ? pieceMap[capMatch[1]] : "";
-    const source = capMatch[2]; // file only or full square – both valid in SAN
-    const target = capMatch[3];
-    return `${piece}${source}x${target}`;
-  }
+    // Captures: "bishop on f3 captures g4", "rook f3 takes g4", "pawn captures e5", "d4 takes e5"
+    const capturePattern = /(pawn|knight|bishop|rook|queen|king)?\s*(?:on\s+)?([a-h][1-8]?)\s*(?:captures?|takes?)\s*([a-h][1-8])/;
+    const capMatch = clean.match(capturePattern);
+    if (capMatch) {
+      const piece = capMatch[1] ? pieceMap[capMatch[1]] : "";
+      const source = capMatch[2];
+      const target = capMatch[3];
+      return `${piece}${source}x${target}`;
+    }
 
-  // Two-square format: "e2 to e4" or "e2 e4" → internal "e2e4" (handled as {from,to} later)
-  const twoSqPattern = /\b([a-h][1-8])\s+(?:to\s+)?([a-h][1-8])\b/;
-  const twoMatch = clean.match(twoSqPattern);
-  if (twoMatch && twoMatch[1] !== twoMatch[2]) {
-    return twoMatch[1] + twoMatch[2]; // e.g. "e2e4"
-  }
+    // Two-square format: "e2 to e4" or "e2 e4" → internal "e2e4" (handled as {from,to} later)
+    const twoSqPattern = /\b([a-h][1-8])\s+(?:to\s+)?([a-h][1-8])\b/;
+    const twoMatch = clean.match(twoSqPattern);
+    if (twoMatch && twoMatch[1] !== twoMatch[2]) {
+      return twoMatch[1] + twoMatch[2];
+    }
 
-  // Standard: "bishop to c4", "knight f6", "pawn e4", "king to g1"
-  const movePattern = /(king|queen|rook|bishop|knight|pawn)?\s*(?:to\s+)?([a-h][1-8])/;
-  const match = clean.match(movePattern);
-  if (match && match[2]) {
-    const piece = match[1] ? pieceMap[match[1]] : "";
-    return piece + match[2];
-  }
+    // Standard: "bishop to c4", "knight f6", "pawn e4", "king to g1"
+    const movePattern = /(king|queen|rook|bishop|knight|pawn)?\s*(?:to\s+)?([a-h][1-8])/;
+    const match = clean.match(movePattern);
+    if (match && match[2]) {
+      const piece = match[1] ? pieceMap[match[1]] : "";
+      return piece + match[2];
+    }
 
-  // Direct algebraic: "e4", "Nf3", "Bb5" etc.
-  if (/^([KQRBN]?[a-h][1-8][+#]?|[KQRBN]?[a-h]x[a-h][1-8][+#]?|[a-h]x[a-h][1-8][+#]?|O-O-O|O-O)$/i.test(stripped)) {
-    return stripped.replace(/[+#]/g, '');
-  }
+    // Direct algebraic: "e4", "Nf3", "Bb5" etc.
+    if (/^([KQRBN]?[a-h][1-8][+#]?|[KQRBN]?[a-h]x[a-h][1-8][+#]?|[a-h]x[a-h][1-8][+#]?|O-O-O|O-O)$/i.test(stripped)) {
+      return stripped.replace(/[+#]/g, '');
+    }
 
-  // Last resort: single square mentioned → treat as pawn move
-  const anySquare = clean.match(/\b([a-h][1-8])\b/g);
-  if (anySquare && anySquare.length === 1) return anySquare[0];
+    // Last resort: single square mentioned → treat as pawn move
+    const anySquare = clean.match(/\b([a-h][1-8])\b/g);
+    if (anySquare && anySquare.length === 1) return anySquare[0];
 
-  return null;
-}, []);
+    return null;
+  }, []);
 
+  // Shared post-move state update
+  const applyMove = useCallback((newGame: Chess, moveSan: string, prevFen: string, winnerTurn: 'white' | 'black') => {
+    setFenHistory(prev => [...prev, prevFen]);
+    setGame(newGame);
+    setFen(newGame.fen());
+    setMoveHistory(prev => [...prev, moveSan]);
+    setCurrentTurn(newGame.turn() === 'w' ? 'white' : 'black');
+    setLastMove(moveSan);
+    setError('');
+    setSelectedSquare(null);
+    setOptionSquares({});
+
+    if (newGame.isCheckmate()) {
+      setGameStatus('checkmate');
+      speak(`Checkmate! ${winnerTurn} wins!`);
+    } else if (newGame.isCheck()) {
+      setGameStatus('check');
+      speak(`${moveSan}. Check!`);
+    } else if (newGame.isStalemate()) {
+      setGameStatus('stalemate');
+      speak('Stalemate! The game is a draw.');
+    } else if (newGame.isDraw()) {
+      setGameStatus('draw');
+      speak('The game is a draw.');
+    } else {
+      setGameStatus('playing');
+      speak(moveSan);
+    }
+  }, [speak]);
 
   // Handle voice recognition
   const startListening = useCallback(() => {
@@ -182,102 +253,55 @@ export default function Home() {
     };
 
     recognitionRef.current.onresult = (event: SpeechRecognitionEvent) => {
-  const spokenWords = event.results[event.resultIndex][0].transcript;
-  setTranscript(spokenWords);
+      const spokenWords = event.results[event.resultIndex][0].transcript;
+      setTranscript(spokenWords);
 
-  const moveString = parseVoiceMove(spokenWords);
-  if (!moveString) {
-    setError('Could not understand move. Please try again.');
-    speak('Could not understand move. Please try again.');
-    recognitionRef.current?.stop();           // ✅ STOP here
-    setIsListening(false);                    // ✅ and stop flag
-    return;
-  }
-
-  try {
-    const newGame = new Chess(fen);
-    // Support "e2e4" from-to format returned by parseVoiceMove for two-square speech
-    const isFromTo = /^[a-h][1-8][a-h][1-8]$/.test(moveString);
-    const move = isFromTo
-      ? newGame.move({ from: moveString.slice(0, 2) as Square, to: moveString.slice(2, 4) as Square, promotion: 'q' })
-      : newGame.move(moveString);
-
-    if (move) {
-      setGame(newGame);
-      setFen(newGame.fen());
-      setMoveHistory(prev => [...prev, move.san]);
-      setCurrentTurn(newGame.turn() === 'w' ? 'white' : 'black');
-      setLastMove(move.san);
-      setError('');
-      speak(`${move.san}`);
-
-      if (newGame.isCheckmate()) {
-        setGameStatus('checkmate');
-        speak(`Checkmate! ${currentTurn} wins!`);
-      } else if (newGame.isCheck()) {
-        setGameStatus('check');
-        speak('Check!');
-      } else if (newGame.isStalemate()) {
-        setGameStatus('stalemate');
-        speak('Stalemate! The game is a draw.');
-      } else if (newGame.isDraw()) {
-        setGameStatus('draw');
-        speak('The game is a draw.');
-      } else {
-        setGameStatus('playing');
+      const moveString = parseVoiceMove(spokenWords);
+      if (!moveString) {
+        setError(`Could not understand "${spokenWords}". Try: "knight to f3" or "e2 to e4".`);
+        speak('Could not understand move. Please try again.');
+        recognitionRef.current?.stop();
+        setIsListening(false);
+        return;
       }
-    } else {
-      setError('Invalid move. Please try again.');
-      speak('Invalid move. Please try again.');
-    }
-  } catch {
-    setError('Invalid move format. Please try again.');
-    speak('Invalid move. Please try again.');
-  }
 
-  recognitionRef.current?.stop();
-  setIsListening(false);
-};
+      try {
+        const newGame = new Chess(fen);
+        const isFromTo = /^[a-h][1-8][a-h][1-8]$/.test(moveString);
+        const move = isFromTo
+          ? newGame.move({ from: moveString.slice(0, 2) as Square, to: moveString.slice(2, 4) as Square, promotion: 'q' })
+          : newGame.move(moveString);
 
-// ✅ Only start listening here
-recognitionRef.current.start();
-  }, [fen, currentTurn, speak, parseVoiceMove]);
+        if (move) {
+          setTranscript(''); // clear after successful move
+          applyMove(newGame, move.san, fen, currentTurn);
+        } else {
+          setError('Invalid move. Please try again.');
+          speak('Invalid move. Please try again.');
+        }
+      } catch {
+        setError('Invalid move format. Please try again.');
+        speak('Invalid move. Please try again.');
+      }
 
-  // Handle piece drop for touch/mouse interaction (using your original API)
+      recognitionRef.current?.stop();
+      setIsListening(false);
+    };
+
+    recognitionRef.current.start();
+  }, [fen, currentTurn, speak, parseVoiceMove, applyMove]);
+
+  // Handle piece drop for touch/mouse interaction
   function onDrop(sourceSquare: string, targetSquare: string) {
     const newGame = new Chess(fen);
-    const move = newGame.move({ 
-      from: sourceSquare, 
-      to: targetSquare, 
-      promotion: "q" 
+    const move = newGame.move({
+      from: sourceSquare,
+      to: targetSquare,
+      promotion: "q"
     });
-    
+
     if (move) {
-      setGame(newGame);
-      setFen(newGame.fen());
-      setMoveHistory(prev => [...prev, move.san]);
-      setCurrentTurn(newGame.turn() === 'w' ? 'white' : 'black');
-      setLastMove(move.san);
-      setError('');
-      setSelectedSquare(null);
-      setOptionSquares({});
-
-      if (newGame.isCheckmate()) {
-        setGameStatus('checkmate');
-        speak(`Checkmate! ${currentTurn} wins!`);
-      } else if (newGame.isCheck()) {
-        setGameStatus('check');
-        speak('Check!');
-      } else if (newGame.isStalemate()) {
-        setGameStatus('stalemate');
-        speak('Stalemate!');
-      } else if (newGame.isDraw()) {
-        setGameStatus('draw');
-        speak('Draw!');
-      } else {
-        setGameStatus('playing');
-      }
-
+      applyMove(newGame, move.san, fen, currentTurn);
       return true;
     } else {
       setError("Invalid move! It's not your turn or that move is illegal.");
@@ -312,34 +336,10 @@ recognitionRef.current.start();
     const playerColor = currentTurn === 'white' ? 'w' : 'b';
 
     if (selectedSquare) {
-      // Attempt move
       const move = currentGame.move({ from: selectedSquare as Square, to: square as Square, promotion: 'q' });
 
       if (move) {
-        setGame(currentGame);
-        setFen(currentGame.fen());
-        setMoveHistory(prev => [...prev, move.san]);
-        setCurrentTurn(currentGame.turn() === 'w' ? 'white' : 'black');
-        setLastMove(move.san);
-        setError('');
-        setSelectedSquare(null);
-        setOptionSquares({});
-
-        if (currentGame.isCheckmate()) {
-          setGameStatus('checkmate');
-          speak(`Checkmate! ${currentTurn} wins!`);
-        } else if (currentGame.isCheck()) {
-          setGameStatus('check');
-          speak('Check!');
-        } else if (currentGame.isStalemate()) {
-          setGameStatus('stalemate');
-          speak('Stalemate!');
-        } else if (currentGame.isDraw()) {
-          setGameStatus('draw');
-          speak('Draw!');
-        } else {
-          setGameStatus('playing');
-        }
+        applyMove(currentGame, move.san, fen, currentTurn);
         return;
       }
 
@@ -351,7 +351,6 @@ recognitionRef.current.start();
         return;
       }
 
-      // Deselect
       setSelectedSquare(null);
       setOptionSquares({});
       return;
@@ -365,12 +364,34 @@ recognitionRef.current.start();
     }
   }
 
+  // Undo last move
+  const undoMove = useCallback(() => {
+    if (fenHistory.length === 0) return;
+    const prevFen = fenHistory[fenHistory.length - 1];
+    const prevGame = new Chess(prevFen);
+    setFenHistory(prev => prev.slice(0, -1));
+    setGame(prevGame);
+    setFen(prevFen);
+    setMoveHistory(prev => {
+      const updated = prev.slice(0, -1);
+      setLastMove(updated[updated.length - 1] ?? '');
+      return updated;
+    });
+    setCurrentTurn(prevGame.turn() === 'w' ? 'white' : 'black');
+    setGameStatus('playing');
+    setError('');
+    setSelectedSquare(null);
+    setOptionSquares({});
+    speak('Move undone.');
+  }, [fenHistory, speak]);
+
   // Reset game
   const resetGame = () => {
     const newGame = new Chess();
     setGame(newGame);
     setFen(newGame.fen());
     setMoveHistory([]);
+    setFenHistory([]);
     setCurrentTurn('white');
     setGameStatus('playing');
     setLastMove('');
@@ -401,20 +422,21 @@ recognitionRef.current.start();
     }
   };
 
-  // Chessboard options object (matching your original structure)
-const chessboardOptions = {
-  position: fen,
-  onPieceDrop: onDrop,
-  boardWidth,
-  customBoardStyle: {
-    borderRadius: '20px',
-    boxShadow: '0 25px 50px -12px rgba(0, 0, 0, 0.7), 0 0 0 1px rgba(16, 185, 129, 0.2)',
-  },
-  customDarkSquareStyle: { backgroundColor: '#769656' },
-  customLightSquareStyle: { backgroundColor: '#eeeed2' },
-  onSquareClick: onSquareClick,
-  customSquareStyles: optionSquares,
-};
+  const isGameOver = gameStatus === 'checkmate' || gameStatus === 'stalemate' || gameStatus === 'draw';
+
+  const chessboardOptions = {
+    position: fen,
+    onPieceDrop: onDrop,
+    boardWidth,
+    customBoardStyle: {
+      borderRadius: '20px',
+      boxShadow: '0 25px 50px -12px rgba(0, 0, 0, 0.7), 0 0 0 1px rgba(16, 185, 129, 0.2)',
+    },
+    customDarkSquareStyle: { backgroundColor: '#769656' },
+    customLightSquareStyle: { backgroundColor: '#eeeed2' },
+    onSquareClick: onSquareClick,
+    customSquareStyles: optionSquares,
+  };
 
 
   return (
@@ -444,11 +466,10 @@ const chessboardOptions = {
               <div ref={boardContainerRef} className="flex justify-center items-center">
                 <div className="chess-board-wrapper relative">
                   <Chessboard {...chessboardOptions} />
-                  {/* Subtle glow effect around board */}
                   <div className="absolute inset-0 bg-gradient-to-r from-emerald-500/10 to-teal-500/10 rounded-2xl blur-xl -z-10 animate-pulse-glow"></div>
                 </div>
               </div>
-              
+
               {/* Game Status */}
               <div className="mt-4 sm:mt-6 text-center animate-slide-up">
                 <div className={`text-xl sm:text-2xl font-bold ${getStatusColor()} mb-2 transition-all duration-300`}>
@@ -464,14 +485,14 @@ const chessboardOptions = {
           </div>
 
           {/* Control Panel */}
-          <div className="lg:col-span-2 space-y-8 sm:space-y-10 order-2">
+          <div className="lg:col-span-2 space-y-4 order-2">
             {/* Voice Control */}
-            <div className="control-panel bg-gradient-to-br from-slate-800/80 to-slate-900/80 backdrop-blur-xl rounded-3xl p-6 sm:p-8 shadow-2xl border border-teal-500/20 hover:border-teal-400/30 transition-all duration-500 animate-fade-in-right mb-4">
+            <div className="control-panel bg-gradient-to-br from-slate-800/80 to-slate-900/80 backdrop-blur-xl rounded-3xl p-6 sm:p-8 shadow-2xl border border-teal-500/20 hover:border-teal-400/30 transition-all duration-500 animate-fade-in-right">
               <h3 className="text-lg sm:text-2xl font-bold text-white mb-4 flex items-center gap-2">
                 <span className="text-2xl animate-bounce-subtle">🎤</span>
                 Voice Control
               </h3>
-              
+
               {!isVoiceSupported ? (
                 <div className="text-red-300 text-center p-4 bg-red-500/10 rounded-2xl border border-red-500/20">
                   Voice recognition not supported in your browser
@@ -480,7 +501,7 @@ const chessboardOptions = {
                 <>
                   <button
                     onClick={startListening}
-                    disabled={isListening || gameStatus === 'checkmate'}
+                    disabled={isListening || isGameOver}
                     className={`w-full py-3 sm:py-4 px-4 sm:px-6 rounded-2xl font-bold text-sm sm:text-lg transition-all duration-500 transform ${
                       isListening
                         ? 'bg-gradient-to-r from-red-500 to-red-600 hover:from-red-600 hover:to-red-700 animate-pulse-red scale-105 shadow-red-500/25'
@@ -494,11 +515,11 @@ const chessboardOptions = {
                       </span>
                     ) : (
                       <span className="flex items-center justify-center gap-2">
-                        🎙️ Speak Your Move
+                        🎙️ {isGameOver ? 'Game Over' : 'Speak Your Move'}
                       </span>
                     )}
                   </button>
-                  
+
                   {transcript && (
                     <div className="mt-4 p-3 bg-slate-800/70 rounded-xl border border-slate-700/50 animate-slide-up">
                       <div className="text-slate-400 text-xs sm:text-sm">You said:</div>
@@ -507,43 +528,51 @@ const chessboardOptions = {
                   )}
                 </>
               )}
-              
+
               {error && (
                 <div className="mt-4 p-3 bg-red-500/10 border border-red-500/30 rounded-xl text-red-300 text-xs sm:text-sm animate-shake">
                   {error}
                 </div>
               )}
-              
             </div>
- 
+
             {/* Game Controls */}
-            <div className="control-panel bg-gradient-to-br from-slate-800/80 to-slate-900/80 backdrop-blur-xl rounded-3xl px-7 py-8 shadow-2xl border border-amber-500/20 hover:border-amber-400/30 transition-all duration-500 animate-fade-in-right animation-delay-200 flex flex-col items-center space-y-6 mb-4">
-              <h3 className="text-2xl font-bold text-white mb-2 flex items-center gap-3 w-full justify-center">
+            <div className="control-panel bg-gradient-to-br from-slate-800/80 to-slate-900/80 backdrop-blur-xl rounded-3xl px-7 py-6 shadow-2xl border border-amber-500/20 hover:border-amber-400/30 transition-all duration-500 animate-fade-in-right animation-delay-200">
+              <h3 className="text-xl font-bold text-white mb-4 flex items-center gap-3">
                 <span className="text-2xl animate-spin-slow">⚙️</span>
                 Controls
               </h3>
-              <div className="mt-6 text-slate-300 text-sm sm:text-base">
-                <div className="font-bold mb-3 text-teal-400">Voice Commands:</div>
-                <div className="space-y-2 font-serif">
-                  <div>• &quot;Pawn to e4&quot;</div>
-                  <div>• &quot;Knight to f3&quot;</div>
-                  <div>• &quot;Castle king side&quot;</div>
-                  <div>• Or just say: &quot;e4&quot;</div>
+              <div className="mb-5 text-slate-300 text-sm">
+                <div className="font-bold mb-2 text-teal-400">Voice Commands:</div>
+                <div className="space-y-1 font-serif text-xs sm:text-sm">
+                  <div>• &quot;Pawn to e4&quot; / &quot;e4&quot; / &quot;echo four&quot;</div>
+                  <div>• &quot;Knight to f3&quot; / &quot;horse to eff three&quot;</div>
+                  <div>• &quot;e2 to e4&quot; / &quot;e two to e four&quot;</div>
+                  <div>• &quot;Bishop takes d5&quot; / &quot;c3 captures d4&quot;</div>
+                  <div>• &quot;Castle king side&quot; / &quot;castle short&quot;</div>
                 </div>
               </div>
-              <button
-                onClick={resetGame}
-                className="w-full max-w-xs py-5 px-3 bg-gradient-to-r from-amber-500 to-orange-500 hover:from-amber-400 hover:to-orange-400 text-white font-bold rounded-2xl transition-all duration-500 transform hover:scale-105 shadow-xl hover:shadow-2xl shadow-amber-500/25 hover:shadow-amber-500/40"
-              >
-                <span className="flex items-center justify-center gap-2">
-                  <span className="animate-spin-slow">🔄</span>
-                  New Game
-                </span>
-              </button>
+              <div className="flex gap-3">
+                <button
+                  onClick={undoMove}
+                  disabled={fenHistory.length === 0}
+                  className="flex-1 py-3 px-3 bg-gradient-to-r from-slate-600 to-slate-700 hover:from-slate-500 hover:to-slate-600 text-white font-bold rounded-2xl transition-all duration-300 transform hover:scale-105 shadow-lg disabled:opacity-30 disabled:cursor-not-allowed disabled:transform-none text-sm"
+                >
+                  ↩ Undo
+                </button>
+                <button
+                  onClick={resetGame}
+                  className="flex-1 py-3 px-3 bg-gradient-to-r from-amber-500 to-orange-500 hover:from-amber-400 hover:to-orange-400 text-white font-bold rounded-2xl transition-all duration-300 transform hover:scale-105 shadow-xl shadow-amber-500/25 hover:shadow-amber-500/40 text-sm"
+                >
+                  <span className="flex items-center justify-center gap-2">
+                    <span className="animate-spin-slow">🔄</span>
+                    New Game
+                  </span>
+                </button>
+              </div>
             </div>
 
             {/* Move History */}
-            {/* Divider for mobile clarity */}
             <div className="block sm:hidden w-full h-2 my-2 bg-gradient-to-r from-emerald-500/10 via-slate-500/10 to-amber-500/10 rounded-full"></div>
             <div className="control-panel bg-gradient-to-br from-slate-800/80 to-slate-900/80 backdrop-blur-xl rounded-3xl p-6 sm:p-8 shadow-2xl border border-slate-500/20 hover:border-slate-400/30 transition-all duration-500 animate-fade-in-right animation-delay-400">
               <h3 className="text-lg sm:text-2xl font-bold text-white mb-4 flex items-center gap-2">
